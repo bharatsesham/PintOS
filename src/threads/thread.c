@@ -11,6 +11,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "devices/timer.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -27,6 +28,9 @@ static struct list ready_list;
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
+
+/* List of all processes that are in sleep status */
+static struct list sleep_list;
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -70,6 +74,7 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+static bool priority_checker (const struct list_elem *thread1, const struct list_elem *thread2, void *aux UNUSED);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -92,6 +97,7 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+  list_init (&sleep_list); // Initiating the sleep_list
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -137,6 +143,9 @@ thread_tick (void)
   /* Enforce preemption. */
   if (++thread_ticks >= TIME_SLICE)
     intr_yield_on_return ();
+
+  /* Wakes up the thread that is in sleep list when it's sleep ticks elapse */
+  thread_wakeup_ticks();
 }
 
 /* Prints thread statistics. */
@@ -211,6 +220,54 @@ thread_create (const char *name, int priority,
   return tid;
 }
 
+/* Puts the thread to sleep for the amount of ticks time.*/
+
+void 
+thread_sleep_ticks(int64_t end_tick)
+{
+  enum intr_level old_level;
+  struct thread *t = thread_current();
+  t->sleep_ticks = end_tick;
+
+  ASSERT(t->status == THREAD_RUNNING);
+  old_level = intr_disable();
+  /* Inserts the thread into the sleep list */
+  list_push_back(&sleep_list, &t->elem);
+  thread_block();
+  intr_set_level(old_level);
+}
+
+/* Wakes up a thread from sleep after it's sleep ticks is lesser than the current time ticks. */ 
+
+void 
+thread_wakeup_ticks(void)
+{
+   enum intr_level old_level;
+
+   struct thread *t;
+   struct list_elem *cur_elem;
+   struct list_elem *next_elem;
+	
+   if(list_empty(&sleep_list)) return;
+   cur_elem = list_begin(&sleep_list);
+
+   /* Iterate until the end of the sleep list */ 
+
+   while(list_end(&sleep_list)!=cur_elem)
+   {
+      t = list_entry(cur_elem, struct thread, elem);
+      next_elem = list_next(cur_elem);
+      if(t->sleep_ticks <= timer_ticks()){
+	old_level = intr_disable();
+        list_remove(cur_elem);
+        thread_unblock(t);
+        intr_set_level(old_level);
+      }
+      cur_elem = next_elem; 
+   }
+
+}
+
 /* Puts the current thread to sleep.  It will not be scheduled
    again until awoken by thread_unblock().
 
@@ -244,7 +301,11 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+
+  //list_push_back (&ready_list, &t->elem);
+  
+  /* Adds the thread into ready list according to priority in a sorted way */
+  list_insert_ordered(&ready_list, &t->elem, priority_checker, NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
