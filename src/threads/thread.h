@@ -4,6 +4,7 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
+#include "threads/fixedpoint.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -23,6 +24,9 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+#define DUMMY_PRIORITY -1               /* Dummy priority. */
+#define NICE_MAXIMUM 20                 /* Maximum value for nice*/
+#define NICE_MINIMUM -20                /* Minimum value for nice*/
 
 /* A kernel thread or user process.
 
@@ -88,7 +92,18 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
-    int64_t sleep_ticks;	        /* Time until which a thread is put to sleep. */
+
+    // Our Implementation
+    int original_priority;               /* To preserve the original priority of a thread  during Priority Donation:*/
+    bool is_donated;                     /* To check if there is a priority donation between threads.*/
+    struct lock *lock_blocking_thread;   /* Lock that is blocking the thread.*/
+    int64_t sleep_ticks;	               /* Time until which a thread is put to sleep. */
+    struct list thread_locks;            /* Locks held by the thread */
+    int sema_priority;                   /* Priority of the sema */  
+    fixed_point_t recent_cpu;            /* Recent cpu of a thread. */ 
+    int nice;                            /*Nice value of a thread. */
+
+    // End
     struct list_elem allelem;           /* List element for all threads list. */
 
     /* Shared between thread.c and synch.c. */
@@ -138,9 +153,17 @@ void thread_foreach (thread_action_func *, void *);
 int thread_get_priority (void);
 void thread_set_priority (int);
 
+/* Our Implementation*/
+void set_priority_for_given_thread(struct thread *t, int priority_new, bool is_donated);
+void yield_given_thread(struct thread *t);
+/*End*/
+
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+void update_load_avg(void);
+void update_thread_priority(struct thread *t, void *UNUSED);
+void update_recent_cpu(struct thread *t, void *UNUSED);
 
 #endif /* threads/thread.h */
