@@ -100,6 +100,10 @@ struct thread
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
+
+    //Our Implementation
+    struct pcb *pcb;                    /* Process control Block. */
+    struct list child_list;             /* List that contains child processess */
   };
 
 /* If false (default), use round-robin scheduler.

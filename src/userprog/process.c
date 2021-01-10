@@ -21,6 +21,7 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+struct pcb* is_child_found(tid_t child_tid);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -32,7 +33,6 @@ process_execute (const char *file_name)
   char *fn_copy;
   tid_t tid;
   char *save_ptr;    // var to keep track of the tokenizer's position.
-  char program_name[strlen(file_name) + 1];   // var to store the program name.
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
@@ -42,12 +42,29 @@ process_execute (const char *file_name)
   strlcpy (fn_copy, file_name, PGSIZE);
 
   // Our Implementation
-  strtok_r(program_name, (char *)" ", &save_ptr); // Extracting only the program name from the entire file_name
+  file_name = strtok_r((char *) file_name, " ", &save_ptr);
+
+  // Our Implementation
+  struct pcb *pcb = palloc_get_page(0);
+
+  pcb->pid = INIT_PID;
+  pcb->argline = fn_copy;
+  pcb->exitcode = -1;
+  pcb->process_waiting = false;
+  pcb->process_done = false;
+
+  sema_init(&pcb->sema_begin, 0);
+  sema_init(&pcb->sema_wait, 0);
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (program_name, PRI_DEFAULT, start_process, fn_copy);
+
+  tid = thread_create (file_name, PRI_DEFAULT, start_process, pcb);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+
+  sema_down(&pcb->sema_begin);
+
+  list_push_back (&(thread_current()->child_list), &(pcb->elem));
   return tid;
 }
 
@@ -56,9 +73,11 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  struct pcb *pcb =  file_name_;
   struct intr_frame if_;
   bool success;
+
+  char *file_name = (char*) pcb->argline;
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -66,11 +85,20 @@ start_process (void *file_name_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
 
-  success = load (file_name, &if_.eip, &if_.esp);
+  success = load ((char*) file_name, &if_.eip, &if_.esp);
 
+  struct thread *t = thread_current();
 
-  /* If load failed, quit. */
+  if(success){
+    pcb->pid = (pid_t)(t->tid);
+  }
+
+  t->pcb = pcb;
+  // wake up sleeping in start_process()
+  sema_up(&pcb->sema_begin);
+
   palloc_free_page (file_name);
+
   if (!success) 
     thread_exit ();
 
@@ -94,10 +122,30 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
-  while(true);
-  return -1;
+  struct pcb *child_pcb = NULL;
+  struct list_elem *item = NULL;
+  struct thread *t = thread_current ();
+  struct list *children_list = &(t->child_list);
+
+  //Iterate through the child list and get the process with pid equals 'child_tid'
+  if (!list_empty(children_list)) {
+    for (item = list_front(children_list); item != list_end(children_list); item = list_next(item)) {
+      struct pcb *pcb = list_entry(item, struct pcb, elem);
+
+      if(pcb->pid == child_tid) {
+        child_pcb = pcb;
+        break;
+      }
+
+    }
+  }
+
+  // Remove from the child_list
+  if(item != NULL)
+    list_remove (item);
+  return child_pcb->exitcode;
 }
 
 /* Free the current process's resources. */

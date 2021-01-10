@@ -83,6 +83,27 @@ saves time at the kernel level and also avoids any unexpected crashes at the ker
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+In process.h
+
+#define INIT_PID ((pid_t) -2)
+
+/* Process Control Block */
+struct pcb {
+  pid_t pid;                /* The pid of process */
+  const char* argline;      /* The command line of this process being executed */
+  struct list_elem elem;    /* element in the child list */
+  int32_t exitcode;         /* the exit code passed from exit() */
+  bool process_waiting;     /* verifies if parent process is waiting */
+  bool process_done;        /* indicates if the process is done. */
+  struct semaphore sema_begin;   /* the semaphore used between start_process() and process_execute() */
+  struct semaphore sema_wait;    /* the semaphore used for wait() : parent blocks until child exits  */
+};
+
+In thread.h
+
+struct pcb *pcb;                    /* Process control Block. */
+struct list child_list;             /* List that contains child processess */
+
 >> B2: Describe how file descriptors are associated with open files.
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
@@ -135,11 +156,28 @@ saves time at the kernel level and also avoids any unexpected crashes at the ker
 >> B9: Why did you choose to implement access to user memory from the
 >> kernel in the way that you did?
 
+We have choosen the method two from section 4.7 (Accessing User Memory) 
+in the PA2_Description_2020.pdf. When we are accessing the user memory 
+from the kernel, we should check if the address sent by the user program
+is correct. First we check if the user address is less than PHYS_BASE,then 
+we use the get_user() to read a byte at user virtual address UADDR and it 
+returns the byte value if successful. However, if it is an invalid memory 
+area, -1 should be returned as a segfault would have occurred. Since all 
+user memory accesses go through this function, it checks if it is the correct 
+memory access. So, finally we choose this method as this method takes advantage 
+of the processor's MMU and it tends to be used in real kernels as specified in
+the PDF.
+
+
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
 
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
+
+We maintain the default mapping between pid_t and tid_t, with identity function.
+We didn't change it.  
+
 
 			   SURVEY QUESTIONS
 			   ================
