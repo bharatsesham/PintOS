@@ -99,6 +99,14 @@ struct pcb {
   struct semaphore sema_wait;    /* the semaphore used for wait() : parent blocks until child exits  */
 };
 
+/* File descriptor */
+struct file_descriptor {
+  int id;
+  struct list_elem elem;
+  struct file* file;
+  struct dir* dir;   
+};
+
 In thread.h
 
 struct pcb *pcb;                    /* Process control Block. */
@@ -108,10 +116,24 @@ struct list child_list;             /* List that contains child processess */
 >> Are file descriptors unique within the entire OS or just within a
 >> single process?
 
+   File descriptors have a one on one association with each file called/opened through syscall The file descriptors
+   are unique within the entire OS.
+
 ---- ALGORITHMS ----
 
 >> B3: Describe your code for reading and writing user data from the
 >> kernel.
+
+   Read: First we will verify if the file, buffer and the size are valid pointers. We do the memory validation 
+   and ensure buffer+0 and buffer + 4 are valid.  If not, we do a system exit. If it is an input, we iterate over 
+   the length of the size variable and take input into the buffer. Else, we will read the existing file using 
+   the file read. If there is no such file or the file couldnt be opened, we return -1.
+
+   Write: The write process is similar to the read. Firstly, we verify if the file, buffer and the size are 
+   valid pointers. We do the memory validation and ensure buffer+0 and buffer + 4 are valid. If not, we do a 
+   system exit. There are two cases here. If it is a write to stdout, we use putbuf to print the content of 
+   the buffer to the console. Else, we will write the content to the file using file_write. If there is no 
+   such file or the file couldnt be opened, we return -1.
 
 >> B4: Suppose a system call causes a full page (4,096 bytes) of data
 >> to be copied from user space into the kernel.  What is the least
@@ -120,8 +142,26 @@ struct list child_list;             /* List that contains child processess */
 >> for a system call that only copies 2 bytes of data?  Is there room
 >> for improvement in these numbers, and how much?
 
+   If the system call causes a full page of data to be copied,
+   
+   The greatest number could be 4096 if its not continous as we may have to check every address to ensure
+   there is valid access. If it is continous, the greatest number would be 2 as we have to check the start 
+   and the end adddress and check if they are mapped.
+
+   The least number would be 1 as in the very first result, we obtain the required result, there is no need 
+   to inspect anymore. 
+
+   If the system call causes 2 bytes of data to be copied,
+
+   The greatest number will be 2 if it is not continuous as we have to inspect where the other byte is present.
+   The lowest number would be 1 if it is continuous.    
+
+ 
 >> B5: Briefly describe your implementation of the "wait" system call
 >> and how it interacts with process termination.
+
+The wait (pid) system call finds pid among the child processes of the current process and waits until it is terminated. The children_list stores all the child processes of the current thread and is traversed to find the pid, also it returns -1 if not found.  Also, we can check if the child process has already ended or it is waiting by looking at the process_done and process_waiting fields in the pcb. If the child process has not yet terminated, the current thread will call the child process' exit() and the parent has to wait until termination finishes(sema_wait is used to achieve this). From the child's perspective, the process_done is set to true. In process_exit(), the resources occupied by this process are first released. Finally, we signal sema_wait as discussed before in case if any parent process is waiting. With this flow, the wait() and exit() system calls interact.
+
 
 >> B6: Any access to user program memory at a user-specified address
 >> can fail due to a bad pointer value.  Such accesses must cause the
@@ -137,6 +177,15 @@ struct list child_list;             /* List that contains child processess */
 >> paragraphs, describe the strategy or strategies you adopted for
 >> managing these issues.  Give an example.
 
+   All the addresses/pointers are verified to ensure they are not null by calling is_valid_address() method which 
+   takes in two parameters. One is the variable whose pointer we would verify and the other is the data size of 
+   that variable. We iterate over the size essentially until the end of the pointer and ensure there is no segfault error.
+   Essentially, before we add each pointer to the sructure, we call is_valid_address().
+
+   For example, if we consider the SYS_WRITE system call, we call is_valid_address() on the esp pointer. It foresees 
+   the three addresses above this(we call is_valid_address three times on esp) and determines if there is a seg fault
+   error. If there is an error, we perform system exit.  
+
 ---- SYNCHRONIZATION ----
 
 >> B7: The "exec" system call returns -1 if loading the new executable
@@ -144,12 +193,22 @@ struct list child_list;             /* List that contains child processess */
 >> loading.  How does your code ensure this?  How is the load
 >> success/failure status passed back to the thread that calls "exec"?
 
+When process_execute runs it creates a semaphore and decrements it. It then starts the child process and tries
+to decrement again. After load() has been called on the new executable, the semaphore gets incremented. This ensures that exec 
+does not return until load() is executed. The child thread then blocks to allow the parent thread to inspect the child thread's load_status.
+
 >> B8: Consider parent process P with child process C.  How do you
 >> ensure proper synchronization and avoid race conditions when P
 >> calls wait(C) before C exits?  After C exits?  How do you ensure
 >> that all resources are freed in each case?  How about when P
 >> terminates without waiting, before C exits?  After C exits?  Are
 >> there any special cases?
+
+Since the currently implemented filesystem does not have internal synchronization, it is recommended that only one process access the filesystem.
+To ensure, locks must be held before and after system calls that access files. The lock used at this time is in syscall.c.
+It is declared as fs_lock, including exec() (because load() internally accesses the file system)
+Acquire a lock before executing a file system related system call, and release the lock afterward (including failure).
+
 
 ---- RATIONALE ----
 
@@ -172,6 +231,8 @@ the PDF.
 >> B10: What advantages or disadvantages can you see to your design
 >> for file descriptors?
 
+The advantages of our implementation are that our file descriptor design is simpler and also we do not impose any limitation on the number of    files that can be opened. however, the latter can also be considered as a disadvantage if seen from a time complexity perspective as we have to loop through all the files to search for a particular struct with a given file descriptor. We have also defined a helper function to find the file_descriptor struct based on the file descriptor number which made the operations simpler and easily searchable. Also, this can lead to elevated consumption of kernel space if the user program tries to open a lot of files.
+
 >> B11: The default tid_t to pid_t mapping is the identity mapping.
 >> If you changed it, what advantages are there to your approach?
 
@@ -182,7 +243,8 @@ We didn't change it.
 			   SURVEY QUESTIONS
 			   ================
 
-Answering these questions is optional, but it will help us improve the
+Answering these questions is optional, but it will help us improve the  intr_register_int (0x30, 3, INTR_ON, syscall_handler, "syscall");
+
 course in future quarters.  Feel free to tell us anything you
 want--these questions are just to spur your thoughts.  You may also
 choose to respond anonymously in the course evaluations at the end of

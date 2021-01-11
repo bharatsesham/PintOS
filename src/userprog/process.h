@@ -1,6 +1,9 @@
 #ifndef USERPROG_PROCESS_H
 #define USERPROG_PROCESS_H
 
+#define PID_ERROR ((pid_t) -1)
+
+
 #include "threads/thread.h"
 #include "threads/synch.h"
 
@@ -23,6 +26,14 @@ struct pcb {
   bool process_done;        /* indicates if the process is done. */
   struct semaphore sema_begin;   /* the semaphore used between start_process() and process_execute() */
   struct semaphore sema_wait;    /* the semaphore used for wait() : parent blocks until child exits  */
+};
+
+/* File descriptor */
+struct file_descriptor {
+  int id;
+  struct list_elem elem;
+  struct file* file;
+  struct dir* dir;   
 };
 
 #endif /* userprog/process.h */

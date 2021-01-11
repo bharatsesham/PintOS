@@ -19,9 +19,11 @@
 #include "threads/vaddr.h"
 
 
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 struct pcb* is_child_found(tid_t child_tid);
+
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -44,7 +46,6 @@ process_execute (const char *file_name)
   // Our Implementation
   file_name = strtok_r((char *) file_name, " ", &save_ptr);
 
-  // Our Implementation
   struct pcb *pcb = palloc_get_page(0);
 
   pcb->pid = INIT_PID;
@@ -100,7 +101,7 @@ start_process (void *file_name_)
   palloc_free_page (file_name);
 
   if (!success) 
-    thread_exit ();
+    sys_exit(-1);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -142,6 +143,27 @@ process_wait (tid_t child_tid)
     }
   }
 
+  //Our Implementation
+
+  // if child process is not found, return -1
+  if (child_pcb == NULL) {
+    return -1;
+  }
+
+  if (!child_pcb->process_waiting) {
+    child_pcb->process_waiting = true; 
+  }
+  else {
+    // Already waiting 
+    return -1; 
+  }
+
+  // block until child terminates, and return the exitcode
+  if (!child_pcb->process_done) {
+    sema_down(&(child_pcb->sema_wait));
+  }
+  ASSERT (child_pcb->process_done == true);
+
   // Remove from the child_list
   if(item != NULL)
     list_remove (item);
@@ -154,6 +176,35 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+
+  struct list *filedesclist = &cur->file_descriptors;
+  struct list *child_list = &cur->child_list;
+
+  // This step involves cleanig the file descriptors
+  while (!list_empty(filedesclist)) {
+    struct list_elem *i = list_pop_front(filedesclist);
+    struct file_descriptor *desc = list_entry(i, struct file_descriptor, elem);
+    file_close(desc->file);
+    palloc_free_page(desc); 
+  }
+
+  // This step involves cleanig the file descriptors
+  while (!list_empty(child_list)) {
+    struct list_elem *i = list_pop_front (child_list);
+    struct pcb *pcb = list_entry(i, struct pcb, elem);
+    if (pcb->process_done == true) {
+      palloc_free_page (pcb);
+    }
+  }
+
+  // Release the files.
+  if(cur->executing_file) {
+    file_allow_write(cur->executing_file);
+    file_close(cur->executing_file);
+  }
+
+  // Unblock the parent process if it has been waiting. 
+  sema_up (&cur->pcb->sema_wait);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -379,12 +430,16 @@ load (const char *file_name, void (**eip) (void), void **esp)
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
 
+  /* Deny writes to executables. */
+  file_deny_write (file); 
+  thread_current()->executing_file = file;
+
   success = true;
   palloc_free_page(argv);  // release the memory allocated to argv.
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  //file_close (file);
   return success;
 }
 

@@ -149,6 +149,15 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
+  // The default implementation assumes that there is a kernel bug when a page fault happens in the kernel context. 
+  // Adding logic to change this as suggested in the Piazza Post.
+
+  if (!user) {
+      f->eip = (void (*) (void)) f->eax;
+      f->eax = 0xffffffff;
+      return;
+  }
+
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
      which fault_addr refers. */

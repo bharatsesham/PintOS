@@ -470,6 +470,8 @@ init_thread (struct thread *t, const char *name, int priority)
 
   #ifdef USERPROG
   list_init(&t->child_list);
+  list_init(&t->file_descriptors);
+  t->executing_file = NULL;
   t->pcb = NULL;
   #endif
 }
